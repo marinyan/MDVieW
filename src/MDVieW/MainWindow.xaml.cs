@@ -588,12 +588,38 @@ public partial class MainWindow : Window
 
     private void Window_DragOver(object sender, DragEventArgs e)
     {
-        if (e.Data.GetDataPresent(DataFormats.FileDrop)) { e.Effects = DragDropEffects.Copy; e.Handled = true; }
+        if (GetDroppedFiles(e.Data) is not { } paths) return;
+        var accepted = paths.Length > 0 && e.AllowedEffects.HasFlag(DragDropEffects.Copy);
+        e.Effects = accepted ? DragDropEffects.Copy : DragDropEffects.None;
+        e.Handled = true;
+        FileDropCountLabel.Text = $"{paths.Length} ファイルをそれぞれタブで開きます";
+        FileDropOverlay.Visibility = accepted ? Visibility.Visible : Visibility.Collapsed;
     }
+
+    private void Window_DragLeave(object sender, DragEventArgs e)
+    {
+        if (!e.Data.GetDataPresent(DataFormats.FileDrop)) return;
+        FileDropOverlay.Visibility = Visibility.Collapsed;
+        e.Handled = true;
+    }
+
     private void Window_Drop(object sender, DragEventArgs e)
     {
-        if (e.Data.GetDataPresent(DataFormats.FileDrop) && e.Data.GetData(DataFormats.FileDrop) is string[] paths)
-        { e.Handled = true; foreach (var path in paths) if (File.Exists(path)) OpenPath(path); }
+        FileDropOverlay.Visibility = Visibility.Collapsed;
+        if (GetDroppedFiles(e.Data) is not { } paths) return;
+        // Handle the tunneling event before TextBox/RichTextBox can consume the file payload as text.
+        e.Handled = true;
+        e.Effects = paths.Length > 0 && e.AllowedEffects.HasFlag(DragDropEffects.Copy) ? DragDropEffects.Copy : DragDropEffects.None;
+        if (e.Effects == DragDropEffects.None) return;
+        foreach (var path in paths) OpenPath(path);
+    }
+
+    private static string[]? GetDroppedFiles(IDataObject data)
+    {
+        if (!data.GetDataPresent(DataFormats.FileDrop)) return null;
+        return data.GetData(DataFormats.FileDrop) is string[] paths
+            ? paths.Where(File.Exists).Distinct(StringComparer.OrdinalIgnoreCase).ToArray()
+            : [];
     }
 
     private void Find_Click(object sender, RoutedEventArgs e) { FindBar.Visibility = Visibility.Visible; FindBox.Focus(); FindBox.SelectAll(); }
@@ -623,5 +649,5 @@ public partial class MainWindow : Window
     private void ZoomOut_Click(object sender, RoutedEventArgs e) => SetZoom(_zoom - 10);
     private void ZoomReset_Click(object sender, RoutedEventArgs e) => SetZoom(100);
     private void About_Click(object sender, RoutedEventArgs e) => MessageBox.Show(this,
-        "MDVieW 0.1.0\n\nWindows ネイティブの Markdown / WYSIWYG エディタ\n\n・左右の見出しをドラッグして入れ替え\n・中央の境界線で幅を調整\n・Ctrl+Tab でタブを切り替え\n・Ctrl+W でタブを閉じる\n\nMarkdown 解析: Markdig (BSD-2-Clause)", "MDVieW について", MessageBoxButton.OK, MessageBoxImage.Information);
+        $"MDVieW {typeof(MainWindow).Assembly.GetName().Version?.ToString(3)}\n\nWindows ネイティブの Markdown / WYSIWYG エディタ\n\n・ファイルをドロップしてタブで開く\n・左右の見出しをドラッグして入れ替え\n・中央の境界線で幅を調整\n・Ctrl+Tab でタブを切り替え\n・Ctrl+W でタブを閉じる\n\nMarkdown 解析: Markdig (BSD-2-Clause)", "MDVieW について", MessageBoxButton.OK, MessageBoxImage.Information);
 }

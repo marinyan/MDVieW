@@ -1,4 +1,5 @@
 using System.IO;
+using System.Reflection;
 using System.Text;
 using System.Windows;
 using System.Windows.Controls;
@@ -24,6 +25,7 @@ internal static class Program
             Check("Literal Markdown punctuation stays literal", LiteralText);
             Check("UTF-8 BOM, Japanese and CRLF survive atomic save", FileRoundTrip);
             Check("Tabs retain editor state and synchronize independently", TabsAndSync);
+            Check("File drops work over editors and tabs without replacing edits", FileDrops);
             Console.WriteLine($"PASS: {_passed} checks");
             return 0;
         }
@@ -147,5 +149,65 @@ internal static class Program
             True(second.Source.Text.Contains("`コード`"), "Inline code button did not insert code: " + second.Source.Text);
         }
         finally { File.Delete(temp); }
+    }
+
+    private static DragEventArgs RaiseDrag(UIElement target, RoutedEvent routedEvent, IDataObject data, DragDropEffects allowed = DragDropEffects.Copy | DragDropEffects.Move)
+    {
+        // WPF's drag event constructor is internal; exercise the real routed events without an OLE mouse loop.
+        var args = (DragEventArgs)Activator.CreateInstance(typeof(DragEventArgs), BindingFlags.Instance | BindingFlags.NonPublic,
+            binder: null, args: [data, DragDropKeyStates.LeftMouseButton, allowed, target, new Point(20, 20)], culture: null)!;
+        args.RoutedEvent = routedEvent;
+        target.RaiseEvent(args);
+        return args;
+    }
+
+    private static void FileDrops()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), "MDVieW-drop-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        try
+        {
+            var firstPath = Path.Combine(directory, "日本語のメモ.md");
+            var secondPath = Path.Combine(directory, "second.txt");
+            File.WriteAllText(firstPath, "# ドロップした文書", new UTF8Encoding(false));
+            File.WriteAllText(secondPath, "Second document", new UTF8Encoding(false));
+            foreach (var surface in new[] { "Source", "Rich", "Tabs", "Window" })
+            {
+                var window = new MainWindow();
+                window.Measure(new Size(1380, 900)); window.Arrange(new Rect(0, 0, 1380, 900)); window.UpdateLayout();
+                var tabs = (TabControl)window.FindName("DocumentTabs");
+                var original = (DocumentSession)((TabItem)tabs.SelectedItem).Tag;
+                original.Source.Text = "# 未保存の編集内容"; original.Source.CaretIndex = 5; window.FlushPending();
+                UIElement target = surface switch { "Source" => original.Source, "Rich" => original.Rich, "Tabs" => tabs, _ => window };
+                var data = new DataObject(DataFormats.FileDrop, new[] { firstPath, secondPath, firstPath, directory, Path.Combine(directory, "missing.md") });
+                data.SetData(DataFormats.UnicodeText, "This must not replace the open document.");
+                var over = RaiseDrag(target, DragDrop.PreviewDragOverEvent, data);
+                True(over.Handled && over.Effects == DragDropEffects.Copy, $"{surface}: file drag was not accepted as a copy");
+                var drop = RaiseDrag(target, DragDrop.PreviewDropEvent, data);
+                True(drop.Handled, $"{surface}: file drop was not handled before the editor's default handler");
+                True(tabs.Items.Count == 3, $"{surface}: expected two new document tabs, got {tabs.Items.Count}");
+                Equal("# 未保存の編集内容", original.Source.Text);
+                True(original.IsDirty && original.Source.CaretIndex == 5, $"{surface}: unsaved editor state was changed");
+                var second = (DocumentSession)((TabItem)tabs.SelectedItem).Tag;
+                Equal(secondPath, second.File.FilePath!); Equal("Second document", second.Source.Text);
+                True(File.Exists(firstPath) && File.Exists(secondPath), "Dropping files moved the originals");
+                var existingDrop = RaiseDrag(second.Rich, DragDrop.PreviewDropEvent, new DataObject(DataFormats.FileDrop, new[] { firstPath }));
+                True(existingDrop.Handled && tabs.Items.Count == 3, "Dropping an open file created a duplicate tab");
+                Equal(firstPath, ((DocumentSession)((TabItem)tabs.SelectedItem).Tag).File.FilePath!);
+                var overlay = (Border)window.FindName("FileDropOverlay");
+                True(overlay.Visibility == Visibility.Collapsed, "Drop feedback remained visible after opening files");
+                var enter = RaiseDrag(window, DragDrop.PreviewDragEnterEvent, data);
+                True(enter.Effects == DragDropEffects.Copy && overlay.Visibility == Visibility.Visible, "File drag feedback did not appear");
+                RaiseDrag(window, DragDrop.PreviewDragLeaveEvent, data);
+                True(overlay.Visibility == Visibility.Collapsed, "Drag cancellation left stale feedback");
+                var folder = RaiseDrag(window, DragDrop.PreviewDropEvent, new DataObject(DataFormats.FileDrop, new[] { directory }));
+                True(folder.Handled && folder.Effects == DragDropEffects.None && tabs.Items.Count == 3, "A folder was accepted as a file");
+                var moveOnly = RaiseDrag(window, DragDrop.PreviewDropEvent, data, DragDropEffects.Move);
+                True(moveOnly.Handled && moveOnly.Effects == DragDropEffects.None && tabs.Items.Count == 3, "A move-only drag was accepted");
+                var plainText = RaiseDrag(window, DragDrop.PreviewDragOverEvent, new DataObject(DataFormats.UnicodeText, "plain text"));
+                True(!plainText.Handled, "Normal text dragging was intercepted by file handling");
+            }
+        }
+        finally { Directory.Delete(directory, true); }
     }
 }
