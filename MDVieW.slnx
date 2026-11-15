@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="src/MDVieW/MDVieW.csproj" />
+  <Project Path="tests/MDVieW.SmokeTests/MDVieW.SmokeTests.csproj" />
+</Solution>

@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>MDVieW</AssemblyName>
+    <RootNamespace>MDVieW</RootNamespace>
+    <Version>0.1.0</Version>
+    <Description>Windows native, two-way Markdown and WYSIWYG editor.</Description>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>Assets/AppIcon.ico</ApplicationIcon>
+  </PropertyGroup>
+  <ItemGroup>
+    <Resource Include="Assets/AppIcon.ico" />
+    <Resource Include="Assets/AppIcon.png" />
+    <PackageReference Include="Markdig" Version="1.6.0" />
+    <InternalsVisibleTo Include="MDVieW.SmokeTests" />
+  </ItemGroup>
+</Project>

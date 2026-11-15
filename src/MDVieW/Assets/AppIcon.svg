@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <title>MDVieW</title>
+  <rect x="8" y="8" width="240" height="240" rx="56" fill="#5555D7" />
+  <path d="M35 174V82H61L91 124L121 82H147V174H119V127L91 164L63 127V174Z" fill="#FFFFFF" />
+  <path d="M174 82H202V135H223L188 176L153 135H174Z" fill="#FFFFFF" />
+</svg>

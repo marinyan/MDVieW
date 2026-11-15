@@ -1,0 +1,26 @@
+name: Windows build
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: Build
+        run: dotnet build MDVieW.slnx -c Release -m:1
+      - name: Check native editors and file operations
+        run: dotnet run --project tests/MDVieW.SmokeTests -c Release --no-build
+      - name: Package Windows x64 app
+        shell: pwsh
+        run: ./scripts/publish.ps1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MDVieW-win-x64
+          path: artifacts/MDVieW-win-x64.zip
