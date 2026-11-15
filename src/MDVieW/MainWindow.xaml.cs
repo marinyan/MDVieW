@@ -19,6 +19,9 @@ public partial class MainWindow : Window
 {
     private readonly List<DocumentSession> _sessions = [];
     private readonly DispatcherTimer _syncTimer = new() { Interval = TimeSpan.FromMilliseconds(160) };
+    private readonly LayoutSettingsStore _layoutSettingsStore;
+    private bool _restoringLayout = true;
+    private bool _layoutSaveFailed;
     private DocumentSession? _active;
     private bool _updating;
     private bool _ready;
@@ -42,13 +45,25 @@ public partial class MainWindow : Window
     private TextBox SourceEditor => _active!.Source;
     private RichTextBox RichEditor => _active!.Rich;
 
-    public MainWindow()
+    public MainWindow() : this(new LayoutSettingsStore(LayoutSettingsStore.DefaultFilePath)) { }
+
+    internal MainWindow(LayoutSettingsStore layoutSettingsStore)
     {
+        _layoutSettingsStore = layoutSettingsStore;
         InitializeComponent();
         _syncTimer.Tick += (_, _) => FlushPending();
         PreviewKeyDown += Window_PreviewKeyDown;
         _ready = true;
         AddSession(Welcome.Text, "ようこそ.md");
+        var settings = _layoutSettingsStore.Load();
+        _paneLayout = settings.PaneLayout;
+        _panesSwapped = settings.PanesSwapped;
+        _viewMode = settings.ViewMode;
+        _sideBySideRatio = settings.SideBySideRatio;
+        _stackedRatio = settings.StackedRatio;
+        SetPaletteOrientation(settings.PaletteOrientation);
+        ApplyPaneLayout();
+        _restoringLayout = false;
     }
 
     private DocumentSession AddSession(string text, string? title = null, DocumentFile? loadedFile = null)
@@ -177,7 +192,7 @@ public partial class MainWindow : Window
         for (var i = 0; i < caret; i++) if (text[i] == '\n') { line++; lastNewline = i; }
         PositionLabel.Text = $"{text.Length:N0} 文字  ·  {line} 行 {caret - lastNewline} 列";
         EncodingLabel.Text = $"UTF-8{(_active.File.HasBom ? " BOM" : "")}  ·  {(_active.File.NewLine == "\r\n" ? "CRLF" : "LF")}  ·  {_zoom}%";
-        StateLabel.Text = (_active.IsDirty ? "変更あり" : "保存済み") + $"  ·  {_sessions.Count} ファイル" + (_viewMode == "Split" ? $"  ·  {(_paneLayout == PaneLayout.SideBySide ? "左右" : "上下")} {Math.Round(SplitRatio * 100)} : {Math.Round((1 - SplitRatio) * 100)}" : "");
+        StateLabel.Text = (_active.IsDirty ? "変更あり" : "保存済み") + $"  ·  {_sessions.Count} ファイル" + (_viewMode == "Split" ? $"  ·  {(_paneLayout == PaneLayout.SideBySide ? "左右" : "上下")} {Math.Round(SplitRatio * 100)} : {Math.Round((1 - SplitRatio) * 100)}" : "") + (_layoutSaveFailed ? "  ·  配置を保存できませんでした" : "");
     }
 
     private void New_Click(object sender, RoutedEventArgs e) => AddSession("");
@@ -273,6 +288,7 @@ public partial class MainWindow : Window
     private void Window_Closing(object? sender, CancelEventArgs e)
     {
         foreach (var session in _sessions.ToArray()) if (!ConfirmClose(session)) { e.Cancel = true; return; }
+        SaveLayout();
         _syncTimer.Stop();
     }
 
@@ -522,6 +538,7 @@ public partial class MainWindow : Window
         if (_viewMode == "Split") RememberRatio();
         FlushPending(); _viewMode = mode;
         ApplyPaneLayout();
+        SaveLayout();
     }
 
     private void PaneLayout_Click(object sender, RoutedEventArgs e)
@@ -535,6 +552,7 @@ public partial class MainWindow : Window
         FlushPending(); EndPaneDrag();
         _paneLayout = layout; _viewMode = "Split";
         ApplyPaneLayout();
+        SaveLayout();
     }
 
     private void ApplyPaneLayout()
@@ -619,6 +637,18 @@ public partial class MainWindow : Window
         }
         HorizontalPaletteMenu.IsChecked = !vertical;
         VerticalPaletteMenu.IsChecked = vertical;
+        SaveLayout();
+    }
+
+    internal void SaveLayout()
+    {
+        if (!_ready || _restoringLayout) return;
+        var failed = !_layoutSettingsStore.Save(new LayoutSettings
+        {
+            PaneLayout = _paneLayout, PaletteOrientation = _paletteOrientation, PanesSwapped = _panesSwapped,
+            ViewMode = _viewMode, SideBySideRatio = _sideBySideRatio, StackedRatio = _stackedRatio
+        });
+        if (failed != _layoutSaveFailed) { _layoutSaveFailed = failed; UpdateStatus(); }
     }
 
     private void RememberRatio()
@@ -632,9 +662,15 @@ public partial class MainWindow : Window
     {
         SplitRatio = 0.5; _viewMode = "Split";
         ApplyPaneLayout();
+        SaveLayout();
     }
     private void Splitter_DoubleClick(object sender, MouseButtonEventArgs e) { ResetSplit_Click(sender, e); e.Handled = true; }
-    private void Splitter_DragCompleted(object sender, DragCompletedEventArgs e) { RememberRatio(); UpdateStatus(); }
+    private void Splitter_DragCompleted(object sender, DragCompletedEventArgs e) { RememberRatio(); UpdateStatus(); SaveLayout(); }
+    private void Splitter_KeyUp(object sender, KeyEventArgs e)
+    {
+        if (_viewMode != "Split" || e.Key is not (Key.Left or Key.Right or Key.Up or Key.Down)) return;
+        EditorGrid.UpdateLayout(); RememberRatio(); UpdateStatus(); SaveLayout();
+    }
 
     private void PaneHeader_MouseDown(object sender, MouseButtonEventArgs e)
     {
@@ -676,6 +712,7 @@ public partial class MainWindow : Window
         if (_viewMode == "Split") RememberRatio();
         _panesSwapped = !_panesSwapped;
         ApplyPaneLayout();
+        SaveLayout();
     }
     private void SwapPanes_Click(object sender, RoutedEventArgs e) => SwapPanes();
 

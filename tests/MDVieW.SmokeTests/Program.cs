@@ -3,6 +3,7 @@ using System.Reflection;
 using System.Text;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Documents;
 using MDVieW;
 using WpfList = System.Windows.Documents.List;
@@ -27,6 +28,8 @@ internal static class Program
             Check("Tabs retain editor state and synchronize independently", TabsAndSync);
             Check("File drops work over editors and tabs without replacing edits", FileDrops);
             Check("Pane and palette layouts preserve editing and independent split sizes", LayoutChanges);
+            Check("Layout preferences and both split ratios survive fresh windows", LayoutPersistence);
+            Check("Invalid settings and failed writes preserve a usable editor", InvalidLayoutSettings);
             Console.WriteLine($"PASS: {_passed} checks");
             return 0;
         }
@@ -36,6 +39,7 @@ internal static class Program
     private static void Check(string label, Action action) { action(); _passed++; Console.WriteLine("PASS " + label); }
     private static void Equal(string expected, string actual) { if (expected != actual) throw new Exception($"Expected:\n{expected}\nActual:\n{actual}"); }
     private static void True(bool value, string message) { if (!value) throw new Exception(message); }
+    private static MainWindow NewWindow(LayoutSettingsStore? settings = null) => new(settings ?? new LayoutSettingsStore(null));
 
     private static void RoundTrips()
     {
@@ -123,7 +127,7 @@ internal static class Program
 
     private static void TabsAndSync()
     {
-        var window = new MainWindow();
+        var window = NewWindow();
         var tabs = (TabControl)window.FindName("DocumentTabs");
         var initial = (DocumentSession)((TabItem)tabs.SelectedItem).Tag;
         initial.Source.Text = "# First\n\nこんにちは"; initial.Source.CaretIndex = 3; window.FlushPending();
@@ -174,7 +178,7 @@ internal static class Program
             File.WriteAllText(secondPath, "Second document", new UTF8Encoding(false));
             foreach (var surface in new[] { "Source", "Rich", "Tabs", "Window" })
             {
-                var window = new MainWindow();
+                var window = NewWindow();
                 if (surface is "Rich" or "Window") window.SetPaneLayout(PaneLayout.Stacked);
                 if (surface is "Tabs" or "Window") window.SetPaletteOrientation(Orientation.Vertical);
                 window.Measure(new Size(1380, 900)); window.Arrange(new Rect(0, 0, 1380, 900)); window.UpdateLayout();
@@ -222,7 +226,7 @@ internal static class Program
 
     private static void LayoutChanges()
     {
-        var window = new MainWindow();
+        var window = NewWindow();
         var tabs = (TabControl)window.FindName("DocumentTabs");
         var session = (DocumentSession)((TabItem)tabs.SelectedItem).Tag;
         session.Source.Text = "# Layout\n\nbody"; session.Source.CaretIndex = session.Source.Text.Length;
@@ -272,5 +276,101 @@ internal static class Program
         source.Select(source.Text.IndexOf("body", StringComparison.Ordinal), 4);
         paletteItems.Children.OfType<Button>().Single(button => button.Tag as string == "Bold").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
         window.FlushPending(); True(source.Text.Contains("**body**"), "Formatting stopped working after rotating the palette");
+    }
+
+    private static void FinishSplitResize(MainWindow window)
+        => ((GridSplitter)window.FindName("PaneSplitter")).RaiseEvent(new DragCompletedEventArgs(0, 0, false) { RoutedEvent = Thumb.DragCompletedEvent });
+
+    private static double FirstPaneRatio(MainWindow window, bool stacked)
+    {
+        var first = stacked ? ((RowDefinition)window.FindName("FirstRow")).ActualHeight : ((ColumnDefinition)window.FindName("FirstColumn")).ActualWidth;
+        var second = stacked ? ((RowDefinition)window.FindName("SecondRow")).ActualHeight : ((ColumnDefinition)window.FindName("SecondColumn")).ActualWidth;
+        return first / (first + second);
+    }
+
+    private static void LayoutPersistence()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), "MDVieW-settings-" + Guid.NewGuid().ToString("N"));
+        var path = Path.Combine(directory, "state", "layout.json");
+        try
+        {
+            var store = new LayoutSettingsStore(path);
+            var first = NewWindow(store); ArrangeWorkspace(first);
+            ((ColumnDefinition)first.FindName("FirstColumn")).Width = new GridLength(3, GridUnitType.Star);
+            ((ColumnDefinition)first.FindName("SecondColumn")).Width = new GridLength(2, GridUnitType.Star);
+            ArrangeWorkspace(first); FinishSplitResize(first);
+            True(File.Exists(path), "Dragging a splitter did not automatically create the settings file");
+            True(Math.Abs(store.Load().SideBySideRatio - 0.6) < 0.01, "Horizontal ratio was not saved on drag completion");
+            first.SetPaneLayout(PaneLayout.Stacked); ArrangeWorkspace(first);
+            ((RowDefinition)first.FindName("FirstRow")).Height = new GridLength(2, GridUnitType.Star);
+            ((RowDefinition)first.FindName("SecondRow")).Height = new GridLength(3, GridUnitType.Star);
+            ArrangeWorkspace(first); FinishSplitResize(first);
+            first.SetPaletteOrientation(Orientation.Vertical); ArrangeWorkspace(first);
+            first.SwapPanes(); ArrangeWorkspace(first);
+            var saved = File.ReadAllText(path);
+            first.Close();
+
+            var second = NewWindow(new LayoutSettingsStore(path)); ArrangeWorkspace(second);
+            Equal(saved, File.ReadAllText(path));
+            var editor = (FrameworkElement)second.FindName("EditorGrid");
+            var sourcePane = (FrameworkElement)second.FindName("SourcePane");
+            var richPane = (FrameworkElement)second.FindName("RichPane");
+            True(((StackPanel)second.FindName("PaletteItems")).Orientation == Orientation.Vertical, "Palette orientation was not restored");
+            True(((GridSplitter)second.FindName("PaneSplitter")).ResizeDirection == GridResizeDirection.Rows, "Stacked layout was not restored");
+            True(sourcePane.TranslatePoint(new Point(), editor).Y > richPane.ActualHeight, "Pane order was not restored");
+            True(Math.Abs(FirstPaneRatio(second, stacked: true) - 0.4) < 0.01, "Startup measurements overwrote the saved vertical ratio");
+            second.SetPaneLayout(PaneLayout.SideBySide); ArrangeWorkspace(second);
+            True(Math.Abs(FirstPaneRatio(second, stacked: false) - 0.6) < 0.01, "The inactive horizontal ratio was not restored");
+            second.SetViewMode("Rich"); second.Close();
+
+            var third = NewWindow(new LayoutSettingsStore(path)); ArrangeWorkspace(third);
+            True(((FrameworkElement)third.FindName("SourcePane")).Visibility == Visibility.Collapsed, "Single-pane view mode was not restored");
+            var visible = (FrameworkElement)third.FindName("RichPane");
+            True(Math.Abs(visible.ActualWidth - ((FrameworkElement)third.FindName("EditorGrid")).ActualWidth) < 1, "The restored single pane did not fill the editor");
+            third.SetViewMode("Split"); ArrangeWorkspace(third);
+            True(Math.Abs(FirstPaneRatio(third, stacked: false) - 0.6) < 0.01, "Single-pane startup destroyed the saved width ratio");
+            third.SetPaneLayout(PaneLayout.Stacked); ArrangeWorkspace(third);
+            True(Math.Abs(FirstPaneRatio(third, stacked: true) - 0.4) < 0.01, "Single-pane startup destroyed the saved height ratio");
+            third.Close();
+        }
+        finally { if (Directory.Exists(directory)) Directory.Delete(directory, true); }
+    }
+
+    private static void InvalidLayoutSettings()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), "MDVieW-settings-errors-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        try
+        {
+            var path = Path.Combine(directory, "layout.json");
+            var store = new LayoutSettingsStore(path);
+            True(store.Load() == new LayoutSettings(), "Missing settings did not use defaults");
+            foreach (var json in new[] { "{broken", "[]", "null", "{\"PaneLayout\":\"Unknown\"}", "{\"PaletteOrientation\":123}" })
+            {
+                File.WriteAllText(path, json);
+                True(store.Load() == new LayoutSettings(), "Malformed settings were not handled: " + json);
+            }
+            File.WriteAllText(path, "{\"PaneLayout\":\"Stacked\",\"PaletteOrientation\":\"Vertical\",\"PanesSwapped\":true,\"ViewMode\":\"Unknown\",\"SideBySideRatio\":-1,\"StackedRatio\":2}");
+            var sanitized = store.Load();
+            True(sanitized.PaneLayout == PaneLayout.Stacked && sanitized.PaletteOrientation == Orientation.Vertical && sanitized.PanesSwapped, "Valid preferences were lost while repairing invalid fields");
+            True(sanitized.ViewMode == "Split" && sanitized.SideBySideRatio == 0.5 && sanitized.StackedRatio == 0.5, "Invalid ratios or view mode were accepted");
+            True(store.Save(new LayoutSettings { SideBySideRatio = double.NaN, StackedRatio = double.PositiveInfinity }), "Non-finite ratios caused a save failure");
+            True(store.Load() == new LayoutSettings(), "Non-finite ratios were not sanitized");
+            var original = File.ReadAllText(path);
+            using (var locked = File.Open(path, FileMode.Open, FileAccess.Read, FileShare.Read))
+            {
+                True(!store.Save(new LayoutSettings { PanesSwapped = true }), "Saving over a locked file incorrectly reported success");
+                Equal(original, File.ReadAllText(path));
+            }
+            True(Directory.GetFiles(directory, "*.tmp").Length == 0, "A failed save left a temporary settings file");
+            var invalidTarget = Path.Combine(directory, "directory-as-settings-file");
+            Directory.CreateDirectory(invalidTarget);
+            var window = NewWindow(new LayoutSettingsStore(invalidTarget));
+            window.SetPaletteOrientation(Orientation.Vertical);
+            True(((StackPanel)window.FindName("PaletteItems")).Orientation == Orientation.Vertical, "A settings write failure prevented changing the layout");
+            True(((TextBlock)window.FindName("StateLabel")).Text.Contains("配置を保存できませんでした"), "A failed settings save was hidden from the user");
+            window.Close();
+        }
+        finally { Directory.Delete(directory, true); }
     }
 }
