@@ -26,6 +26,7 @@ internal static class Program
             Check("UTF-8 BOM, Japanese and CRLF survive atomic save", FileRoundTrip);
             Check("Tabs retain editor state and synchronize independently", TabsAndSync);
             Check("File drops work over editors and tabs without replacing edits", FileDrops);
+            Check("Pane and palette layouts preserve editing and independent split sizes", LayoutChanges);
             Console.WriteLine($"PASS: {_passed} checks");
             return 0;
         }
@@ -174,6 +175,8 @@ internal static class Program
             foreach (var surface in new[] { "Source", "Rich", "Tabs", "Window" })
             {
                 var window = new MainWindow();
+                if (surface is "Rich" or "Window") window.SetPaneLayout(PaneLayout.Stacked);
+                if (surface is "Tabs" or "Window") window.SetPaletteOrientation(Orientation.Vertical);
                 window.Measure(new Size(1380, 900)); window.Arrange(new Rect(0, 0, 1380, 900)); window.UpdateLayout();
                 var tabs = (TabControl)window.FindName("DocumentTabs");
                 var original = (DocumentSession)((TabItem)tabs.SelectedItem).Tag;
@@ -209,5 +212,65 @@ internal static class Program
             }
         }
         finally { Directory.Delete(directory, true); }
+    }
+
+    private static void ArrangeWorkspace(MainWindow window)
+    {
+        var root = (FrameworkElement)window.Content;
+        root.Measure(new Size(1340, 840)); root.Arrange(new Rect(0, 0, 1340, 840)); root.UpdateLayout();
+    }
+
+    private static void LayoutChanges()
+    {
+        var window = new MainWindow();
+        var tabs = (TabControl)window.FindName("DocumentTabs");
+        var session = (DocumentSession)((TabItem)tabs.SelectedItem).Tag;
+        session.Source.Text = "# Layout\n\nbody"; session.Source.CaretIndex = session.Source.Text.Length;
+        session.Source.SelectedText = " 追加"; window.FlushPending();
+        var source = session.Source; var document = session.Rich.Document;
+        var caret = source.CaretIndex; var text = source.Text; var undo = source.CanUndo;
+        var sourcePane = (FrameworkElement)window.FindName("SourcePane");
+        var richPane = (FrameworkElement)window.FindName("RichPane");
+        var editor = (FrameworkElement)window.FindName("EditorGrid");
+        var splitter = (GridSplitter)window.FindName("PaneSplitter");
+        var palette = (FrameworkElement)window.FindName("FormatPalette");
+        var paletteItems = (StackPanel)window.FindName("PaletteItems");
+        ArrangeWorkspace(window);
+        True(sourcePane.ActualWidth > 180 && richPane.TranslatePoint(new Point(), editor).X > sourcePane.ActualWidth, "Side-by-side panes overlap");
+        ((ColumnDefinition)window.FindName("FirstColumn")).Width = new GridLength(2, GridUnitType.Star);
+        ((ColumnDefinition)window.FindName("SecondColumn")).Width = new GridLength(1, GridUnitType.Star);
+        ArrangeWorkspace(window);
+        var widthRatio = sourcePane.ActualWidth / (sourcePane.ActualWidth + richPane.ActualWidth);
+        window.SetPaneLayout(PaneLayout.Stacked); ArrangeWorkspace(window);
+        True(splitter.ResizeDirection == GridResizeDirection.Rows && sourcePane.ActualHeight >= 120 && richPane.TranslatePoint(new Point(), editor).Y > sourcePane.ActualHeight, "Stacked panes overlap or cannot resize vertically");
+        ((RowDefinition)window.FindName("FirstRow")).Height = new GridLength(3, GridUnitType.Star);
+        ((RowDefinition)window.FindName("SecondRow")).Height = new GridLength(2, GridUnitType.Star);
+        ArrangeWorkspace(window);
+        var heightRatio = sourcePane.ActualHeight / (sourcePane.ActualHeight + richPane.ActualHeight);
+        window.SetPaneLayout(PaneLayout.SideBySide); ArrangeWorkspace(window);
+        True(Math.Abs(sourcePane.ActualWidth / (sourcePane.ActualWidth + richPane.ActualWidth) - widthRatio) < 0.01, "Horizontal split size was lost");
+        window.SetPaneLayout(PaneLayout.Stacked); ArrangeWorkspace(window);
+        True(Math.Abs(sourcePane.ActualHeight / (sourcePane.ActualHeight + richPane.ActualHeight) - heightRatio) < 0.01, "Vertical split size was lost");
+        window.SwapPanes(); ArrangeWorkspace(window);
+        True(sourcePane.TranslatePoint(new Point(), editor).Y > richPane.ActualHeight, "Stacked panes did not swap");
+        window.SetViewMode("Source"); ArrangeWorkspace(window);
+        True(richPane.Visibility == Visibility.Collapsed && Math.Abs(sourcePane.ActualHeight - editor.ActualHeight) < 1, "Single-pane mode left an empty stacked slot");
+        window.SetViewMode("Rich"); ArrangeWorkspace(window);
+        True(sourcePane.Visibility == Visibility.Collapsed && Math.Abs(richPane.ActualHeight - editor.ActualHeight) < 1, "WYSIWYG-only mode did not fill the workspace");
+        window.SetViewMode("Split"); window.SwapPanes(); ArrangeWorkspace(window);
+        foreach (var orientation in new[] { Orientation.Vertical, Orientation.Horizontal, Orientation.Vertical })
+        {
+            window.SetPaletteOrientation(orientation); ArrangeWorkspace(window);
+            True(paletteItems.Orientation == orientation, "Palette tools did not change orientation");
+            True(palette.ActualHeight > 0 && palette.ActualWidth > 0 && editor.ActualHeight > 240, "Palette consumed the editor workspace");
+            if (orientation == Orientation.Vertical)
+                True(editor.TranslatePoint(new Point(), (UIElement)window.Content).X > palette.ActualWidth, "Vertical palette overlaps the editor");
+            Equal(text, source.Text);
+            True(ReferenceEquals(session.Source, source) && ReferenceEquals(session.Rich.Document, document), "Layout changes recreated an editor or document");
+            True(source.CaretIndex == caret && source.CanUndo == undo && session.IsDirty, "Layout changes lost editing state");
+        }
+        source.Select(source.Text.IndexOf("body", StringComparison.Ordinal), 4);
+        paletteItems.Children.OfType<Button>().Single(button => button.Tag as string == "Bold").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        window.FlushPending(); True(source.Text.Contains("**body**"), "Formatting stopped working after rotating the palette");
     }
 }

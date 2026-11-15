@@ -13,6 +13,8 @@ using Microsoft.Win32;
 
 namespace MDVieW;
 
+internal enum PaneLayout { SideBySide, Stacked }
+
 public partial class MainWindow : Window
 {
     private readonly List<DocumentSession> _sessions = [];
@@ -25,7 +27,15 @@ public partial class MainWindow : Window
     private int _zoom = 100;
     private string _viewMode = "Split";
     private bool _panesSwapped;
-    private double _firstRatio = 0.5;
+    private PaneLayout _paneLayout = PaneLayout.SideBySide;
+    private Orientation _paletteOrientation = Orientation.Horizontal;
+    private double _sideBySideRatio = 0.5;
+    private double _stackedRatio = 0.5;
+    private double SplitRatio
+    {
+        get => _paneLayout == PaneLayout.SideBySide ? _sideBySideRatio : _stackedRatio;
+        set { if (_paneLayout == PaneLayout.SideBySide) _sideBySideRatio = value; else _stackedRatio = value; }
+    }
     private Point _dragStart;
     private Border? _dragHeader;
     private bool _paneDragging;
@@ -167,7 +177,7 @@ public partial class MainWindow : Window
         for (var i = 0; i < caret; i++) if (text[i] == '\n') { line++; lastNewline = i; }
         PositionLabel.Text = $"{text.Length:N0} 文字  ·  {line} 行 {caret - lastNewline} 列";
         EncodingLabel.Text = $"UTF-8{(_active.File.HasBom ? " BOM" : "")}  ·  {(_active.File.NewLine == "\r\n" ? "CRLF" : "LF")}  ·  {_zoom}%";
-        StateLabel.Text = (_active.IsDirty ? "変更あり" : "保存済み") + $"  ·  {_sessions.Count} ファイル" + (_viewMode == "Split" ? $"  ·  分割 {Math.Round(_firstRatio * 100)} : {Math.Round((1 - _firstRatio) * 100)}" : "");
+        StateLabel.Text = (_active.IsDirty ? "変更あり" : "保存済み") + $"  ·  {_sessions.Count} ファイル" + (_viewMode == "Split" ? $"  ·  {(_paneLayout == PaneLayout.SideBySide ? "左右" : "上下")} {Math.Round(SplitRatio * 100)} : {Math.Round((1 - SplitRatio) * 100)}" : "");
     }
 
     private void New_Click(object sender, RoutedEventArgs e) => AddSession("");
@@ -507,39 +517,121 @@ public partial class MainWindow : Window
 
     private void ViewMode_Click(object sender, RoutedEventArgs e) { if (sender is FrameworkElement { Tag: string mode }) SetViewMode(mode); }
 
-    private void SetViewMode(string mode)
+    internal void SetViewMode(string mode)
     {
         if (_viewMode == "Split") RememberRatio();
         FlushPending(); _viewMode = mode;
+        ApplyPaneLayout();
+    }
+
+    private void PaneLayout_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement { Tag: string value } && Enum.TryParse<PaneLayout>(value, out var layout)) SetPaneLayout(layout);
+    }
+
+    internal void SetPaneLayout(PaneLayout layout)
+    {
+        if (_viewMode == "Split") RememberRatio();
+        FlushPending(); EndPaneDrag();
+        _paneLayout = layout; _viewMode = "Split";
+        ApplyPaneLayout();
+    }
+
+    private void ApplyPaneLayout()
+    {
+        var mode = _viewMode;
+        var sideBySide = _paneLayout == PaneLayout.SideBySide;
+        var split = mode == "Split";
+        var showFirst = mode == "Source" ? !_panesSwapped : _panesSwapped;
+        var first = split ? SplitRatio : showFirst ? 1 : 0;
+        var second = split ? 1 - SplitRatio : showFirst ? 0 : 1;
         SourcePane.Visibility = mode == "Rich" ? Visibility.Collapsed : Visibility.Visible;
         RichPane.Visibility = mode == "Source" ? Visibility.Collapsed : Visibility.Visible;
-        PaneSplitter.Visibility = mode == "Split" ? Visibility.Visible : Visibility.Collapsed;
-        DividerColumn.Width = new GridLength(mode == "Split" ? 9 : 0);
-        SourceColumn.MinWidth = RichColumn.MinWidth = mode == "Split" ? 180 : 0;
-        if (mode == "Split") { SourceColumn.Width = new GridLength(_firstRatio, GridUnitType.Star); RichColumn.Width = new GridLength(1 - _firstRatio, GridUnitType.Star); }
-        else
-        {
-            var showFirst = mode == "Source" ? !_panesSwapped : _panesSwapped;
-            SourceColumn.Width = new GridLength(showFirst ? 1 : 0, GridUnitType.Star);
-            RichColumn.Width = new GridLength(showFirst ? 0 : 1, GridUnitType.Star);
-        }
-        SplitModeButton.Background = mode == "Split" ? Brushes.White : Brushes.Transparent;
+        PaneSplitter.Visibility = split ? Visibility.Visible : Visibility.Collapsed;
+        FirstColumn.MinWidth = SecondColumn.MinWidth = sideBySide && split ? 180 : 0;
+        FirstRow.MinHeight = SecondRow.MinHeight = !sideBySide && split ? 120 : 0;
+        FirstColumn.Width = new GridLength(sideBySide ? first : 1, GridUnitType.Star);
+        SecondColumn.Width = new GridLength(sideBySide ? second : 0, GridUnitType.Star);
+        DividerColumn.Width = new GridLength(sideBySide && split ? 9 : 0);
+        FirstRow.Height = new GridLength(sideBySide ? 1 : first, GridUnitType.Star);
+        SecondRow.Height = new GridLength(sideBySide ? 0 : second, GridUnitType.Star);
+        DividerRow.Height = new GridLength(!sideBySide && split ? 9 : 0);
+        Grid.SetColumn(SourcePane, sideBySide && _panesSwapped ? 2 : 0);
+        Grid.SetColumn(RichPane, sideBySide && !_panesSwapped ? 2 : 0);
+        Grid.SetRow(SourcePane, !sideBySide && _panesSwapped ? 2 : 0);
+        Grid.SetRow(RichPane, !sideBySide && !_panesSwapped ? 2 : 0);
+        Grid.SetColumn(PaneSplitter, sideBySide ? 1 : 0);
+        Grid.SetRow(PaneSplitter, sideBySide ? 0 : 1);
+        PaneSplitter.Width = sideBySide ? 9 : double.NaN;
+        PaneSplitter.Height = sideBySide ? double.NaN : 9;
+        PaneSplitter.ResizeDirection = sideBySide ? GridResizeDirection.Columns : GridResizeDirection.Rows;
+        PaneSplitter.Cursor = sideBySide ? Cursors.SizeWE : Cursors.SizeNS;
+        PaneSplitter.ToolTip = $"ドラッグして{(sideBySide ? "幅" : "高さ")}を変更 / ダブルクリックで均等に分割";
+        System.Windows.Automation.AutomationProperties.SetName(PaneSplitter, sideBySide ? "左右の編集領域の幅を変更" : "上下の編集領域の高さを変更");
+        SideBySideButton.Background = split && sideBySide ? Brushes.White : Brushes.Transparent;
+        StackedButton.Background = split && !sideBySide ? Brushes.White : Brushes.Transparent;
         SourceModeButton.Background = mode == "Source" ? Brushes.White : Brushes.Transparent;
         RichModeButton.Background = mode == "Rich" ? Brushes.White : Brushes.Transparent;
+        SideBySideMenu.IsChecked = split && sideBySide;
+        StackedMenu.IsChecked = split && !sideBySide;
+        SwapPanesMenu.IsEnabled = split;
         UpdateStatus();
+    }
+
+    private void PaletteOrientation_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement { Tag: string value } && Enum.TryParse<Orientation>(value, out var orientation)) SetPaletteOrientation(orientation);
+    }
+    private void TogglePalette_Click(object sender, RoutedEventArgs e)
+        => SetPaletteOrientation(_paletteOrientation == Orientation.Horizontal ? Orientation.Vertical : Orientation.Horizontal);
+
+    internal void SetPaletteOrientation(Orientation orientation)
+    {
+        _paletteOrientation = orientation;
+        var vertical = orientation == Orientation.Vertical;
+        PaletteItems.Orientation = orientation;
+        FormatPalette.Width = vertical ? 144 : double.NaN;
+        FormatPalette.Margin = vertical ? new Thickness(0, 0, 10, 0) : new Thickness(0);
+        FormatPalette.Padding = vertical ? new Thickness(8, 9, 8, 9) : new Thickness(12, 9, 12, 9);
+        FormatPalette.CornerRadius = vertical ? new CornerRadius(9) : new CornerRadius(9, 9, 0, 0);
+        FormatPalette.BorderThickness = vertical ? new Thickness(1) : new Thickness(1, 1, 1, 0);
+        Grid.SetRowSpan(FormatPalette, vertical ? 3 : 1);
+        Grid.SetColumnSpan(FormatPalette, vertical ? 1 : 2);
+        foreach (var surface in new FrameworkElement[] { FindBar, EditorBorder })
+        {
+            Grid.SetColumn(surface, vertical ? 1 : 0);
+            Grid.SetColumnSpan(surface, vertical ? 1 : 2);
+        }
+        EditorBorder.CornerRadius = vertical ? new CornerRadius(9) : new CornerRadius(0, 0, 9, 9);
+        DockPanel.SetDock(PaletteOrientationButton, vertical ? Dock.Top : Dock.Right);
+        PaletteOrientationButton.Margin = vertical ? new Thickness(0, 0, 0, 8) : new Thickness(8, 0, 0, 0);
+        PaletteOrientationButton.Content = vertical ? "↔ 横置き" : "↕ 縦置き";
+        PaletteOrientationButton.ToolTip = vertical ? "書式パレットを横置きに切り替え" : "書式パレットを縦置きに切り替え";
+        PaletteScroll.HorizontalScrollBarVisibility = vertical ? ScrollBarVisibility.Disabled : ScrollBarVisibility.Auto;
+        PaletteScroll.VerticalScrollBarVisibility = vertical ? ScrollBarVisibility.Auto : ScrollBarVisibility.Disabled;
+        BlockStyle.Width = vertical ? 110 : 102;
+        BlockStyle.Margin = vertical ? new Thickness(0, 0, 0, 8) : new Thickness(0, 0, 10, 0);
+        foreach (var separator in PaletteItems.Children.OfType<Border>())
+        {
+            separator.Width = vertical ? double.NaN : 1;
+            separator.Height = vertical ? 1 : double.NaN;
+            separator.Margin = vertical ? new Thickness(4, 8, 4, 8) : new Thickness(10, 4, 10, 4);
+        }
+        HorizontalPaletteMenu.IsChecked = !vertical;
+        VerticalPaletteMenu.IsChecked = vertical;
     }
 
     private void RememberRatio()
     {
-        var width = SourceColumn.ActualWidth + RichColumn.ActualWidth;
-        if (width > 0) _firstRatio = SourceColumn.ActualWidth / width;
+        var first = _paneLayout == PaneLayout.SideBySide ? FirstColumn.ActualWidth : FirstRow.ActualHeight;
+        var second = _paneLayout == PaneLayout.SideBySide ? SecondColumn.ActualWidth : SecondRow.ActualHeight;
+        if (first + second > 0) SplitRatio = Math.Clamp(first / (first + second), 0.05, 0.95);
     }
 
     private void ResetSplit_Click(object sender, RoutedEventArgs e)
     {
-        _firstRatio = 0.5;
-        SourceColumn.Width = new GridLength(1, GridUnitType.Star); RichColumn.Width = new GridLength(1, GridUnitType.Star);
-        _viewMode = ""; SetViewMode("Split");
+        SplitRatio = 0.5; _viewMode = "Split";
+        ApplyPaneLayout();
     }
     private void Splitter_DoubleClick(object sender, MouseButtonEventArgs e) { ResetSplit_Click(sender, e); e.Handled = true; }
     private void Splitter_DragCompleted(object sender, DragCompletedEventArgs e) { RememberRatio(); UpdateStatus(); }
@@ -581,10 +673,11 @@ public partial class MainWindow : Window
 
     internal void SwapPanes()
     {
+        if (_viewMode == "Split") RememberRatio();
         _panesSwapped = !_panesSwapped;
-        Grid.SetColumn(SourcePane, _panesSwapped ? 2 : 0); Grid.SetColumn(RichPane, _panesSwapped ? 0 : 2);
-        SetViewMode(_viewMode);
+        ApplyPaneLayout();
     }
+    private void SwapPanes_Click(object sender, RoutedEventArgs e) => SwapPanes();
 
     private void Window_DragOver(object sender, DragEventArgs e)
     {
@@ -649,5 +742,5 @@ public partial class MainWindow : Window
     private void ZoomOut_Click(object sender, RoutedEventArgs e) => SetZoom(_zoom - 10);
     private void ZoomReset_Click(object sender, RoutedEventArgs e) => SetZoom(100);
     private void About_Click(object sender, RoutedEventArgs e) => MessageBox.Show(this,
-        $"MDVieW {typeof(MainWindow).Assembly.GetName().Version?.ToString(3)}\n\nWindows ネイティブの Markdown / WYSIWYG エディタ\n\n・ファイルをドロップしてタブで開く\n・左右の見出しをドラッグして入れ替え\n・中央の境界線で幅を調整\n・Ctrl+Tab でタブを切り替え\n・Ctrl+W でタブを閉じる\n\nMarkdown 解析: Markdig (BSD-2-Clause)", "MDVieW について", MessageBoxButton.OK, MessageBoxImage.Information);
+        $"MDVieW {typeof(MainWindow).Assembly.GetName().Version?.ToString(3)}\n\nWindows ネイティブの Markdown / WYSIWYG エディタ\n\n・ファイルをドロップしてタブで開く\n・左右 / 上下に配置し、見出しをドラッグして入れ替え\n・中央の境界線で幅や高さを調整\n・書式パレットを横置き / 縦置きに切り替え\n・Ctrl+Tab でタブを切り替え\n・Ctrl+W でタブを閉じる\n\nMarkdown 解析: Markdig (BSD-2-Clause)", "MDVieW について", MessageBoxButton.OK, MessageBoxImage.Information);
 }

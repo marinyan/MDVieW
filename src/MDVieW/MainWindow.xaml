@@ -45,11 +45,18 @@
                 <MenuItem Header="検索(_F)…" InputGestureText="Ctrl+F" Click="Find_Click" />
             </MenuItem>
             <MenuItem Header="表示(_V)">
-                <MenuItem Header="左右に並べる" Tag="Split" Click="ViewMode_Click" />
+                <MenuItem x:Name="SideBySideMenu" Header="左右に並べる" Tag="SideBySide" Click="PaneLayout_Click" IsCheckable="True" IsChecked="True" />
+                <MenuItem x:Name="StackedMenu" Header="上下に並べる" Tag="Stacked" Click="PaneLayout_Click" IsCheckable="True" />
                 <MenuItem Header="テキストのみ" Tag="Source" Click="ViewMode_Click" />
                 <MenuItem Header="WYSIWYGのみ" Tag="Rich" Click="ViewMode_Click" />
                 <Separator />
+                <MenuItem Header="書式パレット">
+                    <MenuItem x:Name="HorizontalPaletteMenu" Header="横置き（上部）" Tag="Horizontal" Click="PaletteOrientation_Click" IsCheckable="True" IsChecked="True" />
+                    <MenuItem x:Name="VerticalPaletteMenu" Header="縦置き（左側）" Tag="Vertical" Click="PaletteOrientation_Click" IsCheckable="True" />
+                </MenuItem>
+                <MenuItem x:Name="SwapPanesMenu" Header="テキストとWYSIWYGを入れ替え" Click="SwapPanes_Click" />
                 <MenuItem Header="分割を50 : 50に戻す" Click="ResetSplit_Click" />
+                <Separator />
                 <MenuItem Header="拡大" InputGestureText="Ctrl++" Click="ZoomIn_Click" />
                 <MenuItem Header="縮小" InputGestureText="Ctrl+-" Click="ZoomOut_Click" />
                 <MenuItem Header="実際のサイズ" InputGestureText="Ctrl+0" Click="ZoomReset_Click" />
@@ -65,8 +72,9 @@
             </Grid>
         </Border>
         <Grid Margin="20,16,20,16">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
             <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
-            <Grid Margin="2,0,2,14">
+            <Grid Grid.ColumnSpan="2" Margin="2,0,2,14">
                 <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                 <DockPanel Margin="0,0,16,0">
                     <Button DockPanel.Dock="Right" Content="＋" Click="New_Click" ToolTip="新しいタブ (Ctrl+N)" Padding="9,5" />
@@ -82,15 +90,18 @@
                 </DockPanel>
                 <Border Grid.Column="1" Background="#EBEDF2" CornerRadius="7" Padding="3">
                     <StackPanel Orientation="Horizontal">
-                        <Button x:Name="SplitModeButton" Content="左右に並べる" Tag="Split" Click="ViewMode_Click" Padding="12,4" Background="White" FontSize="11" />
+                        <Button x:Name="SideBySideButton" Content="左右" Tag="SideBySide" Click="PaneLayout_Click" Padding="12,4" Background="White" FontSize="11" ToolTip="テキストとWYSIWYGを左右に並べる" />
+                        <Button x:Name="StackedButton" Content="上下" Tag="Stacked" Click="PaneLayout_Click" Padding="12,4" FontSize="11" ToolTip="テキストとWYSIWYGを上下に並べる" />
                         <Button x:Name="SourceModeButton" Content="テキスト" Tag="Source" Click="ViewMode_Click" Padding="12,4" FontSize="11" />
                         <Button x:Name="RichModeButton" Content="WYSIWYG" Tag="Rich" Click="ViewMode_Click" Padding="12,4" FontSize="11" />
                     </StackPanel>
                 </Border>
             </Grid>
-            <Border Grid.Row="1" Background="White" BorderBrush="{StaticResource Line}" BorderThickness="1,1,1,0" CornerRadius="9,9,0,0" Padding="12,9">
-                <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled">
-                    <StackPanel Orientation="Horizontal">
+            <Border x:Name="FormatPalette" Grid.Row="1" Grid.ColumnSpan="2" Background="White" BorderBrush="{StaticResource Line}" BorderThickness="1,1,1,0" CornerRadius="9,9,0,0" Padding="12,9">
+                <DockPanel>
+                    <Button x:Name="PaletteOrientationButton" DockPanel.Dock="Right" Content="↕ 縦置き" Click="TogglePalette_Click" Style="{StaticResource ToolButton}" ToolTip="書式パレットを縦置きに切り替え" FontSize="11" Margin="8,0,0,0" />
+                    <ScrollViewer x:Name="PaletteScroll" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled">
+                    <StackPanel x:Name="PaletteItems" Orientation="Horizontal">
                         <ComboBox x:Name="BlockStyle" Width="102" Height="30" SelectedIndex="0" SelectionChanged="BlockStyle_Changed" ToolTip="段落のスタイル" Margin="0,0,10,0" AutomationProperties.Name="段落のスタイル">
                             <ComboBoxItem Content="標準テキスト" Tag="0"/><ComboBoxItem Content="見出し 1" Tag="1"/><ComboBoxItem Content="見出し 2" Tag="2"/><ComboBoxItem Content="見出し 3" Tag="3"/>
                         </ComboBox>
@@ -112,18 +123,20 @@
                         <Button Content="↶" Tag="Undo" Click="Format_Click" Style="{StaticResource ToolButton}" ToolTip="元に戻す (Ctrl+Z)" AutomationProperties.Name="元に戻す" />
                         <Button Content="↷" Tag="Redo" Click="Format_Click" Style="{StaticResource ToolButton}" ToolTip="やり直し (Ctrl+Y)" AutomationProperties.Name="やり直し" />
                     </StackPanel>
-                </ScrollViewer>
+                    </ScrollViewer>
+                </DockPanel>
             </Border>
-            <Border x:Name="FindBar" Grid.Row="2" Visibility="Collapsed" Background="#F0EFFB" Padding="14,8" BorderBrush="{StaticResource Line}" BorderThickness="1,0">
+            <Border x:Name="FindBar" Grid.Row="2" Grid.ColumnSpan="2" Visibility="Collapsed" Background="#F0EFFB" Padding="14,8" BorderBrush="{StaticResource Line}" BorderThickness="1,0">
                 <StackPanel Orientation="Horizontal">
                     <TextBox x:Name="FindBox" Width="240" Padding="6,4" KeyDown="FindBox_KeyDown" AutomationProperties.Name="検索するテキスト" />
                     <Button Content="次を検索" Click="FindNext_Click" /><TextBlock x:Name="FindResult" VerticalAlignment="Center" Foreground="{StaticResource Muted}" Margin="12,0" />
                     <Button Content="閉じる" Click="CloseFind_Click" />
                 </StackPanel>
             </Border>
-            <Border Grid.Row="3" Background="White" BorderBrush="{StaticResource Line}" BorderThickness="1" CornerRadius="0,0,9,9">
+            <Border x:Name="EditorBorder" Grid.Row="3" Grid.ColumnSpan="2" Background="White" BorderBrush="{StaticResource Line}" BorderThickness="1" CornerRadius="0,0,9,9">
                 <Grid x:Name="EditorGrid" ClipToBounds="True">
-                    <Grid.ColumnDefinitions><ColumnDefinition x:Name="SourceColumn" Width="1*" MinWidth="180"/><ColumnDefinition x:Name="DividerColumn" Width="9"/><ColumnDefinition x:Name="RichColumn" Width="1*" MinWidth="180"/></Grid.ColumnDefinitions>
+                    <Grid.ColumnDefinitions><ColumnDefinition x:Name="FirstColumn" Width="1*" MinWidth="180"/><ColumnDefinition x:Name="DividerColumn" Width="9"/><ColumnDefinition x:Name="SecondColumn" Width="1*" MinWidth="180"/></Grid.ColumnDefinitions>
+                    <Grid.RowDefinitions><RowDefinition x:Name="FirstRow" Height="*"/><RowDefinition x:Name="DividerRow" Height="0"/><RowDefinition x:Name="SecondRow" Height="0"/></Grid.RowDefinitions>
                     <Grid x:Name="SourcePane" Background="#FBFBFD">
                         <Grid.RowDefinitions><RowDefinition Height="42"/><RowDefinition Height="*"/></Grid.RowDefinitions>
                         <Border x:Name="SourcePaneHeader" Tag="Source" BorderBrush="{StaticResource Line}" BorderThickness="0,0,0,1" Padding="18,0" Background="Transparent" Cursor="SizeAll" ToolTip="この見出しを反対側の領域へドラッグして入れ替え" PreviewMouseLeftButtonDown="PaneHeader_MouseDown" PreviewMouseMove="PaneHeader_MouseMove" PreviewMouseLeftButtonUp="PaneHeader_MouseUp" LostMouseCapture="PaneHeader_LostCapture">
@@ -134,7 +147,7 @@
                     <GridSplitter x:Name="PaneSplitter" Grid.Column="1" Width="9" HorizontalAlignment="Stretch" VerticalAlignment="Stretch" ResizeDirection="Columns" ResizeBehavior="PreviousAndNext" Background="#F2F3F7"
                                   ShowsPreview="False" DragCompleted="Splitter_DragCompleted" MouseDoubleClick="Splitter_DoubleClick" Focusable="True" KeyboardNavigation.TabIndex="0"
                                   ToolTip="ドラッグして幅を変更 / ダブルクリックで均等に分割" AutomationProperties.Name="左右の編集領域の幅を変更">
-                        <GridSplitter.Template><ControlTemplate TargetType="GridSplitter"><Border x:Name="GripBackground" Background="{TemplateBinding Background}"><Border Width="3" Height="34" Background="#C9CBD8" CornerRadius="1.5" HorizontalAlignment="Center" VerticalAlignment="Center" /></Border><ControlTemplate.Triggers><Trigger Property="IsMouseOver" Value="True"><Setter TargetName="GripBackground" Property="Background" Value="#DFDDF7" /></Trigger><Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="GripBackground" Property="Background" Value="#DFDDF7" /></Trigger></ControlTemplate.Triggers></ControlTemplate></GridSplitter.Template>
+                        <GridSplitter.Template><ControlTemplate TargetType="GridSplitter"><Border x:Name="GripBackground" Background="{TemplateBinding Background}"><Border x:Name="SplitterGrip" Width="3" Height="34" Background="#C9CBD8" CornerRadius="1.5" HorizontalAlignment="Center" VerticalAlignment="Center" /></Border><ControlTemplate.Triggers><Trigger Property="IsMouseOver" Value="True"><Setter TargetName="GripBackground" Property="Background" Value="#DFDDF7" /></Trigger><Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="GripBackground" Property="Background" Value="#DFDDF7" /></Trigger><Trigger Property="ResizeDirection" Value="Rows"><Setter TargetName="SplitterGrip" Property="Width" Value="34"/><Setter TargetName="SplitterGrip" Property="Height" Value="3"/></Trigger></ControlTemplate.Triggers></ControlTemplate></GridSplitter.Template>
                     </GridSplitter>
                     <Grid x:Name="RichPane" Grid.Column="2">
                         <Grid.RowDefinitions><RowDefinition Height="42"/><RowDefinition Height="*"/></Grid.RowDefinitions>
@@ -143,7 +156,7 @@
                         </Border>
                         <ContentControl x:Name="RichHost" Grid.Row="1" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch" />
                     </Grid>
-                    <Border x:Name="FileDropOverlay" Grid.ColumnSpan="3" Panel.ZIndex="10" Visibility="Collapsed" IsHitTestVisible="False"
+                    <Border x:Name="FileDropOverlay" Grid.ColumnSpan="3" Grid.RowSpan="3" Panel.ZIndex="10" Visibility="Collapsed" IsHitTestVisible="False"
                             Background="#EAF4F2FE" BorderBrush="#9993E4" BorderThickness="2" CornerRadius="8" Margin="8" Padding="24">
                         <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
                             <TextBlock Text="↓" FontSize="42" Foreground="{StaticResource Accent}" HorizontalAlignment="Center" Margin="0,0,0,8" />
