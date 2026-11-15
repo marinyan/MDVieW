@@ -5,6 +5,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Documents;
+using System.Windows.Threading;
 using MDVieW;
 using WpfList = System.Windows.Documents.List;
 
@@ -30,6 +31,8 @@ internal static class Program
             Check("Pane and palette layouts preserve editing and independent split sizes", LayoutChanges);
             Check("Layout preferences and both split ratios survive fresh windows", LayoutPersistence);
             Check("Invalid settings and failed writes preserve a usable editor", InvalidLayoutSettings);
+            Check("Document blocks synchronize scrolling in both directions without feedback", SynchronizedScrolling);
+            Check("Ctrl-wheel zoom preserves documents, reading positions and preferences", WheelZoom);
             Console.WriteLine($"PASS: {_passed} checks");
             return 0;
         }
@@ -372,5 +375,95 @@ internal static class Program
             window.Close();
         }
         finally { Directory.Delete(directory, true); }
+    }
+
+    private static void PumpLayout(MainWindow window)
+    {
+        ArrangeWorkspace(window);
+        var frame = new DispatcherFrame();
+        Dispatcher.CurrentDispatcher.BeginInvoke(DispatcherPriority.ContextIdle, new Action(() => frame.Continue = false));
+        Dispatcher.PushFrame(frame);
+        ArrangeWorkspace(window);
+    }
+
+    private static DocumentSession LongDocument(MainWindow window)
+    {
+        var tabs = (TabControl)window.FindName("DocumentTabs");
+        var session = (DocumentSession)((TabItem)tabs.SelectedItem).Tag;
+        session.Source.Text = string.Join("\n\n", Enumerable.Range(0, 80).Select(i =>
+            $"## Section {i}\n\n" + (i < 35 ? "- first item\n- second item\n- third item" : "A short paragraph with **bold text** and `inline code`.")));
+        window.FlushPending(); session.File.Reset(session.Source.Text); PumpLayout(window);
+        return session;
+    }
+
+    private static void SynchronizedScrolling()
+    {
+        var window = NewWindow(); var session = LongDocument(window);
+        var source = session.Source; var rich = session.Rich;
+        True(source.ExtentHeight > source.ViewportHeight && rich.ExtentHeight > rich.ViewportHeight, "Long documents did not produce native scrollable viewports");
+        session.Scrolling.SelectLeader(true);
+        var index = source.Text.IndexOf("## Section 24", StringComparison.Ordinal);
+        source.ScrollToLine(source.GetLineIndexFromCharacterIndex(index)); PumpLayout(window);
+        True(source.VerticalOffset > 0 && rich.VerticalOffset > 0, "Scrolling the Markdown editor did not move WYSIWYG");
+        var heading = rich.Document.Blocks.OfType<Paragraph>().First(p => new TextRange(p.ContentStart, p.ContentEnd).Text.StartsWith("Section 24", StringComparison.Ordinal));
+        var headingY = heading.ContentStart.GetCharacterRect(LogicalDirection.Forward).Top;
+        True(Math.Abs(headingY - rich.Padding.Top) < 35, $"Matching heading is misaligned after source scrolling: {headingY}");
+        var originalSourceOffset = source.VerticalOffset;
+        PumpLayout(window);
+        True(Math.Abs(source.VerticalOffset - originalSourceOffset) < 1, "Programmatic WYSIWYG scrolling fed back into the source editor");
+        session.Scrolling.SelectLeader(false);
+        rich.ScrollToVerticalOffset((rich.ExtentHeight - rich.ViewportHeight) * 0.8); PumpLayout(window);
+        True(source.VerticalOffset > originalSourceOffset, "Scrolling WYSIWYG did not move the source editor");
+        window.SetScrollSync(false);
+        var previousRichOffset = rich.VerticalOffset;
+        session.Scrolling.SelectLeader(true); source.ScrollToHome(); PumpLayout(window);
+        True(source.VerticalOffset == 0 && Math.Abs(rich.VerticalOffset - previousRichOffset) < 1, "Disabling synchronization did not allow independent scrolling");
+        window.SetScrollSync(true); PumpLayout(window);
+        True(rich.VerticalOffset < 1, "Enabling synchronization did not align the current reading position");
+        window.SetPaneLayout(PaneLayout.Stacked); PumpLayout(window);
+        session.Scrolling.SelectLeader(true); source.ScrollToEnd(); PumpLayout(window);
+        True(Math.Abs(rich.VerticalOffset - (rich.ExtentHeight - rich.ViewportHeight)) < 1, "Stacked layout did not synchronize the document end");
+    }
+
+    private static void WheelZoom()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), "MDVieW-wheel-" + Guid.NewGuid().ToString("N"));
+        var path = Path.Combine(directory, "layout.json");
+        try
+        {
+            var window = NewWindow(new LayoutSettingsStore(path)); var session = LongDocument(window);
+            var text = session.Source.Text;
+            True(!window.HandleZoomWheel(-120, false), "Ordinary wheel input was consumed as zoom");
+            True(window.HandleZoomWheel(60, true), "Ctrl-wheel was not consumed before native scrolling");
+            True(Math.Abs(session.Source.FontSize - 14) < 0.01, "A partial wheel notch changed zoom too early");
+            window.HandleZoomWheel(60, true); PumpLayout(window);
+            True(Math.Abs(session.Source.FontSize - 15.4) < 0.01, "Precision wheel deltas did not accumulate to a 10% zoom step");
+            window.HandleZoomWheel(-120, true); PumpLayout(window);
+            window.SetScrollSync(false);
+            session.Source.ScrollToVerticalOffset((session.Source.ExtentHeight - session.Source.ViewportHeight) * 0.4);
+            session.Rich.ScrollToVerticalOffset((session.Rich.ExtentHeight - session.Rich.ViewportHeight) * 0.25);
+            PumpLayout(window);
+            var sourceProgress = session.Source.VerticalOffset / (session.Source.ExtentHeight - session.Source.ViewportHeight);
+            var richProgress = session.Rich.VerticalOffset / (session.Rich.ExtentHeight - session.Rich.ViewportHeight);
+            window.HandleZoomWheel(360, true); PumpLayout(window);
+            True(Math.Abs(session.Source.FontSize - 18.2) < 0.01 && session.Rich.LayoutTransform is System.Windows.Media.ScaleTransform { ScaleX: 1.3 }, "The two native editors did not zoom together");
+            True(Math.Abs(session.Source.VerticalOffset / (session.Source.ExtentHeight - session.Source.ViewportHeight) - sourceProgress) < 0.03, "Zoom lost the source reading position");
+            True(Math.Abs(session.Rich.VerticalOffset / (session.Rich.ExtentHeight - session.Rich.ViewportHeight) - richProgress) < 0.03, "Zoom lost the WYSIWYG reading position");
+            var saved = new LayoutSettingsStore(path).Load();
+            True(saved.ZoomPercent == 130 && !saved.SyncScrolling, "Zoom and synchronization preferences were not saved");
+            var restored = NewWindow(new LayoutSettingsStore(path)); PumpLayout(restored);
+            var restoredSession = (DocumentSession)((TabItem)((TabControl)restored.FindName("DocumentTabs")).SelectedItem).Tag;
+            True(Math.Abs(restoredSession.Source.FontSize - 18.2) < 0.01 && !((MenuItem)restored.FindName("SyncScrollMenu")).IsChecked, "Zoom or synchronization preference was not restored");
+            window.HandleZoomWheel(120 * 50, true); PumpLayout(window);
+            True(Math.Abs(session.Source.FontSize - 25.2) < 0.01, "Zoom exceeded 180%");
+            window.HandleZoomWheel(-120 * 50, true); PumpLayout(window);
+            True(Math.Abs(session.Source.FontSize - 9.8) < 0.01, "Zoom fell below 70%");
+            Equal(text, session.Source.Text); True(!session.IsDirty, "Scrolling or zooming changed the document");
+            File.WriteAllText(path, "{\"PaneLayout\":\"Stacked\",\"SideBySideRatio\":0.65}");
+            var legacy = new LayoutSettingsStore(path).Load();
+            True(legacy.SyncScrolling && legacy.ZoomPercent == 100 && legacy.PaneLayout == PaneLayout.Stacked, "Older layout settings did not receive compatible defaults");
+            True((legacy with { ZoomPercent = 999 }).Validated().ZoomPercent == 100, "An invalid persisted zoom value was accepted");
+        }
+        finally { if (Directory.Exists(directory)) Directory.Delete(directory, true); }
     }
 }

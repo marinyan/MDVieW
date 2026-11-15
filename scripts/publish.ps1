@@ -20,6 +20,7 @@ $taskReadme = [System.IO.File]::ReadAllText((Join-Path $taskRoot 'README.md')).R
 [System.IO.File]::WriteAllText((Join-Path $taskOutput 'README.md'), $taskReadme, [System.Text.UTF8Encoding]::new($false))
 Copy-Item -LiteralPath (Join-Path $taskRoot 'src/MDVieW/Assets/AppIcon.png') -Destination $taskOutput
 Copy-Item -LiteralPath (Join-Path $taskRoot 'src/MDVieW/Assets/AppIcon.ico') -Destination $taskOutput
+Copy-Item -LiteralPath (Join-Path $taskRoot 'LICENSE') -Destination $taskOutput
 Copy-Item -LiteralPath (Join-Path $taskRoot 'THIRD-PARTY-NOTICES.txt') -Destination $taskOutput
 if (-not $FrameworkDependent) {
     $taskPackageInfo = dotnet nuget locals global-packages --list

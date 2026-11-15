@@ -7,12 +7,15 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>MDVieW</AssemblyName>
     <RootNamespace>MDVieW</RootNamespace>
-    <Version>0.2.1</Version>
+    <Version>0.3.0</Version>
     <Description>Windows native, two-way Markdown and WYSIWYG editor.</Description>
+    <Copyright>Copyright (c) 2026 marinyan</Copyright>
+    <PackageLicenseExpression>BSD-2-Clause</PackageLicenseExpression>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>Assets/AppIcon.ico</ApplicationIcon>
   </PropertyGroup>
   <ItemGroup>
+    <EmbeddedResource Include="../../LICENSE" LogicalName="MDVieW.LICENSE" />
     <Resource Include="Assets/AppIcon.ico" />
     <Resource Include="Assets/AppIcon.png" />
     <PackageReference Include="Markdig" Version="1.6.0" />

@@ -36,9 +36,11 @@ internal sealed class DocumentSession
     public SyncDirection Pending { get; set; }
     public bool RichActive { get; set; }
     public bool IsDirty => Pending == SyncDirection.Rich || Source.Text != File.SavedText;
+    public EditorScrollSynchronizer Scrolling { get; }
 
     public DocumentSession()
     {
+        Scrolling = new EditorScrollSynchronizer(Source, Rich, Codec);
         AutomationProperties.SetName(Source, "Markdown テキストエディタ");
         AutomationProperties.SetName(Rich, "WYSIWYG エディタ");
         SpellCheck.SetIsEnabled(Source, false);

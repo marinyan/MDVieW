@@ -28,6 +28,8 @@ public partial class MainWindow : Window
     private bool _updatingStyle;
     private int _untitledCount;
     private int _zoom = 100;
+    private int _zoomWheelRemainder;
+    private bool _syncScrolling = true;
     private string _viewMode = "Split";
     private bool _panesSwapped;
     private PaneLayout _paneLayout = PaneLayout.SideBySide;
@@ -61,7 +63,11 @@ public partial class MainWindow : Window
         _viewMode = settings.ViewMode;
         _sideBySideRatio = settings.SideBySideRatio;
         _stackedRatio = settings.StackedRatio;
+        _zoom = settings.ZoomPercent;
+        _syncScrolling = settings.SyncScrolling;
+        SyncScrollMenu.IsChecked = _syncScrolling;
         SetPaletteOrientation(settings.PaletteOrientation);
+        ApplyZoom();
         ApplyPaneLayout();
         _restoringLayout = false;
     }
@@ -69,6 +75,8 @@ public partial class MainWindow : Window
     private DocumentSession AddSession(string text, string? title = null, DocumentFile? loadedFile = null)
     {
         var session = new DocumentSession { UntitledName = title ?? (++_untitledCount == 1 ? "無題.md" : $"無題 {_untitledCount}.md") };
+        session.Scrolling.IsEnabled = () => _syncScrolling && _viewMode == "Split" && _active == session
+            && !_restoringLayout && !_updating && session.Pending == SyncDirection.None;
         session.File.Reset(text);
         if (loadedFile?.FilePath is { } path) text = session.File.Open(path);
         _updating = true;
@@ -121,7 +129,7 @@ public partial class MainWindow : Window
         FlushPending();
         _active = next;
         SourceHost.Content = next.Source; RichHost.Content = next.Rich;
-        ApplyZoom(); UpdateStatus(); UpdateBlockStyle();
+        next.Scrolling.PreservePositions(ApplyZoom); UpdateStatus(); UpdateBlockStyle();
     }
 
     private void SourceChanged(DocumentSession session)
@@ -594,6 +602,7 @@ public partial class MainWindow : Window
         StackedMenu.IsChecked = split && !sideBySide;
         SwapPanesMenu.IsEnabled = split;
         UpdateStatus();
+        SynchronizeVisibleEditors();
     }
 
     private void PaletteOrientation_Click(object sender, RoutedEventArgs e)
@@ -637,7 +646,15 @@ public partial class MainWindow : Window
         }
         HorizontalPaletteMenu.IsChecked = !vertical;
         VerticalPaletteMenu.IsChecked = vertical;
+        SynchronizeVisibleEditors();
         SaveLayout();
+    }
+
+    private void SynchronizeVisibleEditors()
+    {
+        if (_restoringLayout || !_syncScrolling || _viewMode != "Split") return;
+        EditorGrid.UpdateLayout();
+        _active?.Scrolling.Synchronize();
     }
 
     internal void SaveLayout()
@@ -646,7 +663,8 @@ public partial class MainWindow : Window
         var failed = !_layoutSettingsStore.Save(new LayoutSettings
         {
             PaneLayout = _paneLayout, PaletteOrientation = _paletteOrientation, PanesSwapped = _panesSwapped,
-            ViewMode = _viewMode, SideBySideRatio = _sideBySideRatio, StackedRatio = _stackedRatio
+            ViewMode = _viewMode, SideBySideRatio = _sideBySideRatio, StackedRatio = _stackedRatio,
+            SyncScrolling = _syncScrolling, ZoomPercent = _zoom
         });
         if (failed != _layoutSaveFailed) { _layoutSaveFailed = failed; UpdateStatus(); }
     }
@@ -768,7 +786,37 @@ public partial class MainWindow : Window
         if (index >= 0) { SourceEditor.Focus(); SourceEditor.Select(index, FindBox.Text.Length); SourceEditor.ScrollToLine(SourceEditor.GetLineIndexFromCharacterIndex(index)); }
     }
 
-    private void SetZoom(int value) { _zoom = Math.Clamp(value, 70, 180); ApplyZoom(); UpdateStatus(); }
+    private void SyncScroll_Click(object sender, RoutedEventArgs e) => SetScrollSync(SyncScrollMenu.IsChecked);
+    internal void SetScrollSync(bool enabled)
+    {
+        _syncScrolling = enabled; SyncScrollMenu.IsChecked = enabled;
+        if (enabled) _active?.Scrolling.Synchronize();
+        SaveLayout();
+    }
+
+    private void Window_MouseWheel(object sender, MouseWheelEventArgs e)
+    {
+        if (HandleZoomWheel(e.Delta, Keyboard.Modifiers.HasFlag(ModifierKeys.Control))) e.Handled = true;
+    }
+
+    internal bool HandleZoomWheel(int delta, bool controlPressed)
+    {
+        if (!controlPressed) { _zoomWheelRemainder = 0; return false; }
+        _zoomWheelRemainder += delta;
+        var steps = _zoomWheelRemainder / Mouse.MouseWheelDeltaForOneLine;
+        _zoomWheelRemainder %= Mouse.MouseWheelDeltaForOneLine;
+        if (steps != 0) SetZoom(_zoom + steps * 10);
+        return true;
+    }
+
+    private void SetZoom(int value)
+    {
+        var zoom = Math.Clamp(value, 70, 180);
+        if (zoom == _zoom) return;
+        FlushPending(); _zoom = zoom;
+        _active?.Scrolling.PreservePositions(ApplyZoom);
+        UpdateStatus(); SaveLayout();
+    }
     private void ApplyZoom()
     {
         if (_active == null) return;
@@ -778,6 +826,12 @@ public partial class MainWindow : Window
     private void ZoomIn_Click(object sender, RoutedEventArgs e) => SetZoom(_zoom + 10);
     private void ZoomOut_Click(object sender, RoutedEventArgs e) => SetZoom(_zoom - 10);
     private void ZoomReset_Click(object sender, RoutedEventArgs e) => SetZoom(100);
+    private void License_Click(object sender, RoutedEventArgs e)
+    {
+        using var stream = typeof(MainWindow).Assembly.GetManifestResourceStream("MDVieW.LICENSE")!;
+        using var reader = new StreamReader(stream, Encoding.UTF8);
+        MessageBox.Show(this, reader.ReadToEnd(), "MDVieW — BSD 2-Clause License", MessageBoxButton.OK, MessageBoxImage.Information);
+    }
     private void About_Click(object sender, RoutedEventArgs e) => MessageBox.Show(this,
-        $"MDVieW {typeof(MainWindow).Assembly.GetName().Version?.ToString(3)}\n\nWindows ネイティブの Markdown / WYSIWYG エディタ\n\n・ファイルをドロップしてタブで開く\n・左右 / 上下に配置し、見出しをドラッグして入れ替え\n・中央の境界線で幅や高さを調整\n・書式パレットを横置き / 縦置きに切り替え\n・Ctrl+Tab でタブを切り替え\n・Ctrl+W でタブを閉じる\n\nMarkdown 解析: Markdig (BSD-2-Clause)", "MDVieW について", MessageBoxButton.OK, MessageBoxImage.Information);
+        $"MDVieW {typeof(MainWindow).Assembly.GetName().Version?.ToString(3)}\n\nWindows ネイティブの Markdown / WYSIWYG エディタ\n\n・ファイルをドロップしてタブで開く\n・左右 / 上下に配置し、見出しをドラッグして入れ替え\n・中央の境界線で幅や高さを調整\n・書式パレットを横置き / 縦置きに切り替え\n・同期スクロールは「表示」メニューで切り替え\n・Ctrl+ホイールで拡大縮小、Ctrl+0で100%\n・Ctrl+Tab でタブを切り替え\n・Ctrl+W でタブを閉じる\n\nMDVieW: BSD-2-Clause / Copyright (c) 2026 marinyan\nMarkdown 解析: Markdig (BSD-2-Clause)", "MDVieW について", MessageBoxButton.OK, MessageBoxImage.Information);
 }

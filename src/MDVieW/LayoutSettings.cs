@@ -14,6 +14,8 @@ internal sealed record LayoutSettings
     public string ViewMode { get; init; } = "Split";
     public double SideBySideRatio { get; init; } = 0.5;
     public double StackedRatio { get; init; } = 0.5;
+    public bool SyncScrolling { get; init; } = true;
+    public int ZoomPercent { get; init; } = 100;
 
     public LayoutSettings Validated() => this with
     {
@@ -21,7 +23,8 @@ internal sealed record LayoutSettings
         PaletteOrientation = Enum.IsDefined(PaletteOrientation) ? PaletteOrientation : Orientation.Horizontal,
         ViewMode = ViewMode is "Split" or "Source" or "Rich" ? ViewMode : "Split",
         SideBySideRatio = ValidRatio(SideBySideRatio),
-        StackedRatio = ValidRatio(StackedRatio)
+        StackedRatio = ValidRatio(StackedRatio),
+        ZoomPercent = ZoomPercent is >= 70 and <= 180 ? ZoomPercent : 100
     };
 
     private static double ValidRatio(double value) => double.IsFinite(value) && value is >= 0.05 and <= 0.95 ? value : 0.5;

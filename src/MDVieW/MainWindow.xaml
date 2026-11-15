@@ -5,7 +5,7 @@
         WindowStartupLocation="CenterScreen" Background="#F5F6F8"
         FontFamily="Yu Gothic UI, Segoe UI" FontSize="13" Foreground="{StaticResource Ink}"
         AllowDrop="True" PreviewDragEnter="Window_DragOver" PreviewDragOver="Window_DragOver"
-        PreviewDragLeave="Window_DragLeave" PreviewDrop="Window_Drop" Closing="Window_Closing">
+        PreviewDragLeave="Window_DragLeave" PreviewDrop="Window_Drop" PreviewMouseWheel="Window_MouseWheel" Closing="Window_Closing">
     <DockPanel>
         <Border DockPanel.Dock="Top" Background="White" BorderBrush="{StaticResource Line}" BorderThickness="0,0,0,1">
             <Grid Margin="24,15,24,14">
@@ -56,12 +56,13 @@
                 </MenuItem>
                 <MenuItem x:Name="SwapPanesMenu" Header="テキストとWYSIWYGを入れ替え" Click="SwapPanes_Click" />
                 <MenuItem Header="分割を50 : 50に戻す" Click="ResetSplit_Click" />
+                <MenuItem x:Name="SyncScrollMenu" Header="同期スクロール" IsCheckable="True" IsChecked="True" Click="SyncScroll_Click" />
                 <Separator />
                 <MenuItem Header="拡大" InputGestureText="Ctrl++" Click="ZoomIn_Click" />
                 <MenuItem Header="縮小" InputGestureText="Ctrl+-" Click="ZoomOut_Click" />
                 <MenuItem Header="実際のサイズ" InputGestureText="Ctrl+0" Click="ZoomReset_Click" />
             </MenuItem>
-            <MenuItem Header="ヘルプ(_H)"><MenuItem Header="MDVieWについて" Click="About_Click" /></MenuItem>
+            <MenuItem Header="ヘルプ(_H)"><MenuItem Header="MDVieWについて" Click="About_Click" /><MenuItem Header="ライセンス" Click="License_Click" /></MenuItem>
         </Menu>
         <Border DockPanel.Dock="Bottom" Background="White" BorderBrush="{StaticResource Line}" BorderThickness="0,1,0,0" Padding="20,9">
             <Grid>

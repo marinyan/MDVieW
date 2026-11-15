@@ -28,12 +28,14 @@ public sealed class MarkdownCodec
         .UsePipeTables().UseTaskLists().UseEmphasisExtras(EmphasisExtraOptions.Strikethrough).UseAutoLinks().Build();
     private readonly ConditionalWeakTable<Block, Snapshot> _snapshots = new();
     private readonly ConditionalWeakTable<FlowDocument, DocumentOrigin> _origins = new();
+    private readonly ConditionalWeakTable<Block, SourcePosition> _positions = new();
     private string _source = "";
     private string? _baseDirectory;
     public event Action? InteractiveContentChanged;
 
     private sealed record Snapshot(string Original, string Canonical, string Suffix);
     private sealed record DocumentOrigin(string Prefix);
+    private sealed record SourcePosition(int Line);
     private static readonly Brush Ink = BrushOf("#293344");
     private static readonly Brush Muted = BrushOf("#7D8597");
     private static readonly Brush CodeBackground = BrushOf("#F2F3F8");
@@ -53,6 +55,7 @@ public sealed class MarkdownCodec
         var ast = Markdown.Parse(source, _pipeline).Where(block => block is not LinkReferenceDefinitionGroup).ToArray();
         var prefix = ast.Length == 0 ? source : source[..LineStart(ast[0].Span.Start)];
         _origins.Add(document, new DocumentOrigin(prefix));
+        var sourceLine = prefix.Count(c => c == '\n');
         for (var i = 0; i < ast.Length; i++)
         {
             var node = ast[i];
@@ -65,6 +68,8 @@ public sealed class MarkdownCodec
             var suffixStart = Math.Clamp(node.Span.End + 1, start, end);
             var suffix = source[suffixStart..end];
             _snapshots.Add(block, new Snapshot(original, SerializeBlock(block), suffix));
+            _positions.Add(block, new SourcePosition(sourceLine));
+            sourceLine += original.Count(c => c == '\n');
         }
         if (document.Blocks.Count == 0) document.Blocks.Add(new Paragraph());
         return document;
@@ -74,25 +79,36 @@ public sealed class MarkdownCodec
     {
         var output = new StringBuilder();
         if (_origins.TryGetValue(document, out var origin)) output.Append(origin.Prefix);
+        var sourceLine = origin?.Prefix.Count(c => c == '\n') ?? 0;
         var blocks = document.Blocks.Cast<Block>().ToArray();
         for (var i = 0; i < blocks.Length; i++)
         {
             var block = blocks[i];
             var canonical = SerializeBlock(block);
+            string piece;
             if (_snapshots.TryGetValue(block, out var snapshot) && canonical == snapshot.Canonical)
             {
-                output.Append(snapshot.Original);
-                if (i < blocks.Length - 1 && !snapshot.Original.EndsWith('\n')) output.Append("\n\n");
+                piece = snapshot.Original;
+                if (i < blocks.Length - 1 && !piece.EndsWith('\n')) piece += "\n\n";
             }
             else
             {
-                output.Append(canonical);
                 var suffix = snapshot?.Suffix ?? (i < blocks.Length - 1 ? "\n\n" : "");
                 if (i < blocks.Length - 1 && string.IsNullOrWhiteSpace(suffix) && suffix.Count(c => c == '\n') < 2) suffix = "\n\n";
-                output.Append(suffix);
+                piece = canonical + suffix;
             }
+            _positions.Remove(block);
+            _positions.Add(block, new SourcePosition(sourceLine));
+            sourceLine += piece.Count(c => c == '\n');
+            output.Append(piece);
         }
         return output.ToString();
+    }
+
+    internal IEnumerable<(Block Block, int SourceLine)> ScrollAnchors(FlowDocument document)
+    {
+        foreach (var block in document.Blocks)
+            if (_positions.TryGetValue(block, out var position)) yield return (block, position.Line);
     }
 
     private int LineStart(int index)
